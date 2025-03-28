@@ -1,5 +1,4 @@
-# aptos
-Here's a **README** file for your **Crypto Literacy Learning App for Students** project:  
+ 
 
 ---
 
