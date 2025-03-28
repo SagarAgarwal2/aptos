@@ -19,6 +19,7 @@ Our vision is to create a decentralized, transparent, and engaging learning plat
 - **AI-powered Personalized Learning**: Implement AI-based personalized learning paths for students.  
 
 ## Contract Details  
-- **Contract Address**: "0x15ffd5126c9e8372eb20f33d27d3d6bcf4b7c5695878b5ca875a2dadd53e1c2b  
+- **Contract Address**: "0x15ffd5126c9e8372eb20f33d27d3d6bcf4b7c5695878b5ca875a2dadd53e1c2b"  
+<img width="959" alt="image" src="https://github.com/user-attachments/assets/e27c8af3-e6a3-48fc-9a47-b4b2d8707411" />
 
 ---
