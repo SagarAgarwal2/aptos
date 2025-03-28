@@ -1,0 +1,15 @@
+[package]
+name = "crypto"
+version = "1.0.0"
+authors = []
+
+[addresses]
+CryptoLiteracy = "0x4add32e868c861a8b0737c47437a69e01135079013c8fc8387cd8f3fecd8e85b"
+[dev-addresses]
+
+[dependencies.AptosFramework]
+git = "https://github.com/aptos-labs/aptos-framework.git"
+rev = "mainnet"
+subdir = "aptos-framework"
+
+[dev-dependencies]
