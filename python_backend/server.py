@@ -1,85 +1,89 @@
 from fastapi import FastAPI, HTTPException
-from aptos_sdk.account import Account
-from aptos_sdk.transactions import TransactionPayload, EntryFunction
+from pydantic import BaseModel
+from typing import Dict, List
 import os
 from dotenv import load_dotenv
-from pydantic import BaseModel
-from typing import Dict, Optional
 
 # Load environment variables
 load_dotenv()
 
 app = FastAPI()
 
-# Set up Aptos connection
-NODE_URL = "https://fullnode.devnet.aptoslabs.com"  # Use "testnet" or "mainnet" if needed
-
-# Load your Aptos account
-try:
-    PRIVATE_KEY = os.getenv("APTOS_PRIVATE_KEY")
-    if not PRIVATE_KEY:
-        raise ValueError("APTOS_PRIVATE_KEY environment variable is not set")
-    account = Account.load_key(PRIVATE_KEY)
-except Exception as e:
-    print(f"Error loading Aptos account: {str(e)}")
-    account = None
-
-# In-memory storage for student data (replace with database in production)
+# In-memory storage for students and lessons
 students: Dict[str, dict] = {}
+lessons: List[dict] = []
 
 class StudentRegistration(BaseModel):
     student_address: str
 
-class RewardRequest(BaseModel):
+class LessonCreation(BaseModel):
+    title: str
+    description: str
+    reward_amount: int
+
+class CompleteLesson(BaseModel):
     student_address: str
-    amount: int
+    lesson_id: int
 
 @app.get("/")
 def home():
-    if not account:
-        raise HTTPException(status_code=500, detail="Aptos account not properly configured")
-    return {"message": "Connected to Aptos Blockchain"}
+    return {"message": "Crypto Literacy Learning App API is running"}
 
 @app.post("/register")
 async def register_student(registration: StudentRegistration):
-    try:
-        student_address = registration.student_address
-        if student_address in students:
-            raise HTTPException(status_code=400, detail="Student already registered")
-        
-        students[student_address] = {
-            "lessons_completed": 0,
-            "total_rewards": 0
-        }
-        return {"message": "Student registered successfully"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    student_address = registration.student_address
 
-@app.post("/reward")
-async def reward_student(reward: RewardRequest):
-    try:
-        student_address = reward.student_address
-        amount = reward.amount
-        
-        if student_address not in students:
-            raise HTTPException(status_code=404, detail="Student not found")
-        
-        # Here you would implement the actual token transfer logic using Aptos SDK
-        # For now, we'll just update the in-memory data
-        students[student_address]["total_rewards"] += amount
-        return {"message": f"Rewarded {amount} APT to student"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    if student_address in students:
+        raise HTTPException(status_code=400, detail="Student already registered")
+    
+    students[student_address] = {
+        "lessons_completed": [],
+        "total_rewards": 0
+    }
+    
+    return {"message": "Student registered successfully"}
 
-@app.get("/progress/{address}")
-async def check_progress(address: str):
-    try:
-        if address not in students:
-            raise HTTPException(status_code=404, detail="Student not found")
-        
-        return students[address]
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+@app.post("/create_lesson")
+async def create_lesson(lesson: LessonCreation):
+    lesson_id = len(lessons)
+    lessons.append({
+        "id": lesson_id,
+        "title": lesson.title,
+        "description": lesson.description,
+        "reward_amount": lesson.reward_amount
+    })
+    
+    return {"message": "Lesson created successfully", "lesson_id": lesson_id}
+
+@app.post("/complete_lesson")
+async def complete_lesson(request: CompleteLesson):
+    student_address = request.student_address
+    lesson_id = request.lesson_id
+
+    if student_address not in students:
+        raise HTTPException(status_code=404, detail="Student not found")
+    
+    if lesson_id >= len(lessons):
+        raise HTTPException(status_code=404, detail="Lesson not found")
+    
+    if lesson_id in students[student_address]["lessons_completed"]:
+        raise HTTPException(status_code=400, detail="Lesson already completed")
+    
+    students[student_address]["lessons_completed"].append(lesson_id)
+    students[student_address]["total_rewards"] += lessons[lesson_id]["reward_amount"]
+
+    return {"message": f"Lesson {lesson_id} completed. Reward earned: {lessons[lesson_id]['reward_amount']} APT"}
+
+@app.get("/progress/{student_address}")
+async def check_progress(student_address: str):
+    if student_address not in students:
+        raise HTTPException(status_code=404, detail="Student not found")
+    
+    return students[student_address]
+
+@app.get("/lessons")
+async def get_lessons():
+    return lessons
 
 if __name__ == "__main__":
     import uvicorn
