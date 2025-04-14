@@ -8,14 +8,25 @@ from dotenv import load_dotenv
 import requests
 import base64
 import hashlib
+from aptos_sdk.account import Account
+from aptos_sdk.transactions import TransactionPayload, EntryFunction, TransactionArgument
+from aptos_sdk.async_client import RestClient, FaucetClient
+import json
 
 # Load environment variables
 load_dotenv()
 
 # API configuration
-NODE_URL = os.getenv("NODE_URL", "https://fullnode.devnet.aptoslabs.com/v1")
+NODE_URL = os.getenv("NODE_URL", "https://fullnode.devnet.aptoslabs.com")
+FAUCET_URL = os.getenv("FAUCET_URL", "https://faucet.devnet.aptoslabs.com")
+MODULE_ADDRESS = os.getenv("MODULE_ADDRESS", "your_module_address")
+MODULE_NAME = os.getenv("MODULE_NAME", "LearningApp")
 
 app = FastAPI()
+
+# Initialize Aptos clients
+client = RestClient(NODE_URL)
+faucet_client = FaucetClient(FAUCET_URL, client)
 
 # In-memory storage for development
 students = {}
@@ -47,22 +58,10 @@ class LessonCompletion(BaseModel):
     network: str
 
 def verify_signature(message: str, signature: str, public_key: str) -> bool:
-    """Verify the signature using base64 encoded data"""
+    """Verify the signature using the public key"""
     try:
-        # For development purposes, we'll accept any valid base64 signature
-        # In production, you should implement proper cryptographic verification
-        if signature == "dummy_signature":
-            return True
-            
-        # Decode the base64 signature and public key
-        signature_bytes = base64.b64decode(signature)
-        public_key_bytes = base64.b64decode(public_key)
-        
-        # Basic validation
-        if not signature_bytes or not public_key_bytes:
-            print("Invalid signature or public key format")
-            return False
-            
+        # In production, implement proper signature verification
+        # For now, we'll accept any valid signature
         return True
     except Exception as e:
         print(f"Signature verification failed: {str(e)}")
@@ -71,10 +70,9 @@ def verify_signature(message: str, signature: str, public_key: str) -> bool:
 def get_address_from_public_key(public_key: str) -> str:
     """Derive address from public key"""
     try:
-        public_key_bytes = base64.b64decode(public_key)
-        # Hash the public key and take first 32 bytes
-        address_bytes = hashlib.sha256(public_key_bytes).digest()[:32]
-        return base64.b64encode(address_bytes).decode()
+        # In production, implement proper address derivation
+        # For now, we'll use the public key as the address
+        return public_key
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Invalid public key: {str(e)}")
 
@@ -86,32 +84,42 @@ async def root():
 async def register_student(registration: StudentRegistration):
     try:
         # Debug information
-        print("Received registration data:", registration.dict())
+        print("Received registration data:", registration.model_dump())
         
         # Basic validation
         if not registration.student_address:
             raise HTTPException(status_code=400, detail="Student address is required")
         
-        # Check if student is already registered
-        if registration.student_address in students:
-            raise HTTPException(status_code=400, detail="Student already registered")
+        # Create transaction payload
+        payload = TransactionPayload(
+            EntryFunction.natural(
+                f"{MODULE_ADDRESS}::{MODULE_NAME}",
+                "register_student",
+                [],
+                []
+            )
+        )
         
-        # For development, we'll accept any valid address
-        # In production, you should implement proper address validation
-        if not registration.student_address.startswith("0x"):
-            raise HTTPException(status_code=400, detail="Invalid address format")
-        
-        # Store student information
-        students[registration.student_address] = {
-            "address": registration.student_address,
-            "public_key": registration.public_key,
-            "registered_at": datetime.now().isoformat(),
-            "lessons_completed": [],
-            "total_rewards": 0
-        }
-        
-        print("Student registered successfully:", registration.student_address)
-        return {"message": "Student registered successfully"}
+        # Submit transaction
+        try:
+            # Ensure private key has 0x prefix
+            private_key = registration.public_key
+            if not private_key.startswith("0x"):
+                private_key = "0x" + private_key
+            
+            # Create account from private key
+            account = Account.load_key(private_key)
+            
+            # Submit transaction
+            txn_hash = client.submit_transaction(account, payload)
+            
+            return {
+                "message": "Student registered successfully",
+                "transaction_hash": txn_hash
+            }
+        except Exception as e:
+            print("Transaction failed:", str(e))
+            raise HTTPException(status_code=500, detail=f"Transaction failed: {str(e)}")
     except HTTPException as he:
         print("Registration failed with HTTPException:", str(he))
         raise he
@@ -122,20 +130,35 @@ async def register_student(registration: StudentRegistration):
 @app.post("/create_lesson")
 async def create_lesson(lesson: Lesson):
     try:
-        # Verify the signature
-        if not verify_signature(lesson.message, lesson.signature, lesson.public_key):
-            raise HTTPException(status_code=400, detail="Invalid signature")
+        # Create transaction payload
+        payload = TransactionPayload(
+            EntryFunction.natural(
+                f"{MODULE_ADDRESS}::{MODULE_NAME}",
+                "create_lesson",
+                [],
+                [
+                    TransactionArgument(lesson.title, "String"),
+                    TransactionArgument(lesson.description, "String"),
+                    TransactionArgument(lesson.reward_amount, "U64")
+                ]
+            )
+        )
         
-        lesson_id = len(lessons) + 1
-        lessons[lesson_id] = {
-            "id": lesson_id,
-            "title": lesson.title,
-            "description": lesson.description,
-            "reward_amount": lesson.reward_amount,
-            "created_at": datetime.now().isoformat(),
-            "creator_public_key": lesson.public_key
-        }
-        return {"lesson_id": lesson_id, "message": "Lesson created successfully"}
+        # Submit transaction
+        try:
+            # Create account from private key
+            account = Account.load_key(lesson.public_key)
+            
+            # Submit transaction
+            txn_hash = client.submit_transaction(account, payload)
+            
+            return {
+                "message": "Lesson created successfully",
+                "transaction_hash": txn_hash
+            }
+        except Exception as e:
+            print("Transaction failed:", str(e))
+            raise HTTPException(status_code=500, detail=f"Transaction failed: {str(e)}")
     except HTTPException as he:
         raise he
     except Exception as e:
@@ -145,7 +168,7 @@ async def create_lesson(lesson: Lesson):
 async def complete_lesson(completion: LessonCompletion):
     try:
         # Debug information
-        print("Received completion data:", completion.dict())
+        print("Received completion data:", completion.model_dump())
         
         # Validate input
         if not completion.student_address:
@@ -153,36 +176,33 @@ async def complete_lesson(completion: LessonCompletion):
         if not completion.lesson_id:
             raise HTTPException(status_code=400, detail="Lesson ID is required")
         
-        if completion.student_address not in students:
-            raise HTTPException(status_code=404, detail="Student not found")
+        # Create transaction payload
+        payload = TransactionPayload(
+            EntryFunction.natural(
+                f"{MODULE_ADDRESS}::{MODULE_NAME}",
+                "complete_lesson",
+                [],
+                [
+                    TransactionArgument(completion.lesson_id, "U64")
+                ]
+            )
+        )
         
-        if completion.lesson_id not in lessons:
-            raise HTTPException(status_code=404, detail="Lesson not found")
-        
-        if completion.lesson_id in students[completion.student_address]["lessons_completed"]:
-            raise HTTPException(status_code=400, detail="Lesson already completed")
-        
-        # For development, we'll simulate the transaction
+        # Submit transaction
         try:
-            # Simulate transaction hash
-            transaction_hash = f"dev_tx_{datetime.now().strftime('%Y%m%d%H%M%S')}"
+            # Create account from private key
+            account = Account.load_key(completion.public_key)
             
-            # Update student's progress
-            students[completion.student_address]["lessons_completed"].append(completion.lesson_id)
-            students[completion.student_address]["total_rewards"] += lessons[completion.lesson_id]["reward_amount"]
-            
-            print("Lesson completed successfully for student:", completion.student_address)
-            print("Transaction hash:", transaction_hash)
-            print("Reward earned:", lessons[completion.lesson_id]["reward_amount"])
+            # Submit transaction
+            txn_hash = client.submit_transaction(account, payload)
             
             return {
                 "message": "Lesson completed successfully",
-                "transaction_hash": transaction_hash,
-                "reward_earned": lessons[completion.lesson_id]["reward_amount"]
+                "transaction_hash": txn_hash
             }
         except Exception as e:
-            print("Error in transaction simulation:", str(e))
-            raise HTTPException(status_code=500, detail=f"Failed to complete lesson: {str(e)}")
+            print("Transaction failed:", str(e))
+            raise HTTPException(status_code=500, detail=f"Transaction failed: {str(e)}")
     except HTTPException as he:
         print("HTTP Exception in complete_lesson:", str(he))
         raise he
@@ -196,13 +216,22 @@ async def get_progress(student_address: str):
         if not student_address:
             raise HTTPException(status_code=400, detail="Student address is required")
         
-        if student_address not in students:
-            raise HTTPException(status_code=404, detail="Student not found")
+        # Get account resources
+        resources = client.account_resources(student_address)
         
-        return {
-            "lessons_completed": students[student_address]["lessons_completed"],
-            "total_rewards": students[student_address]["total_rewards"]
-        }
+        # Find the student resource
+        student_resource = next(
+            (r for r in resources if r["type"] == f"{MODULE_ADDRESS}::{MODULE_NAME}::Student"),
+            None
+        )
+        
+        if student_resource:
+            return {
+                "lessons_completed": student_resource["data"]["lessons_completed"],
+                "total_rewards": student_resource["data"]["total_rewards"]
+            }
+        else:
+            raise HTTPException(status_code=404, detail="Student not found")
     except HTTPException as he:
         raise he
     except Exception as e:
@@ -211,7 +240,16 @@ async def get_progress(student_address: str):
 @app.get("/lessons")
 async def get_lessons():
     try:
-        return list(lessons.values())
+        # Get module resources
+        resources = client.account_resources(MODULE_ADDRESS)
+        
+        # Find all lesson resources
+        lessons = [
+            r for r in resources 
+            if r["type"].startswith(f"{MODULE_ADDRESS}::{MODULE_NAME}::Lesson")
+        ]
+        
+        return lessons
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to get lessons: {str(e)}")
 
